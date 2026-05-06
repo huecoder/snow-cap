@@ -127,9 +127,16 @@
             this._resizeObserver.observe(this.el);
         }
 
-        // Initial render.
+        // Initial render: wait for fonts to load so text silhouettes match the
+        // DOM (otherwise the canvas falls back to a different font with
+        // different metrics and the cap floats above the actual letters).
         var self2 = this;
-        requestAnimationFrame(function () { self2.refresh(); });
+        var fontsReady =
+            (typeof document !== 'undefined' && document.fonts && document.fonts.ready) ||
+            Promise.resolve();
+        Promise.resolve(fontsReady).then(function () {
+            requestAnimationFrame(function () { self2._render(); });
+        });
     };
 
     SnowCap.prototype._injectFilter = function () {
@@ -206,10 +213,30 @@
 
         // --- Rasterize the silhouette of the host element ---
         if (this.el.classList.contains('obj-text') || (this.el.tagName && /^H[1-6]$/.test(this.el.tagName))) {
-            ctx.font = st.fontWeight + ' ' + st.fontSize + ' ' + st.fontFamily;
+            ctx.font =
+                st.fontStyle + ' ' + st.fontVariant + ' ' + st.fontWeight + ' ' +
+                st.fontSize + '/' + st.lineHeight + ' ' + st.fontFamily;
+            // Match DOM letter-spacing so column widths line up.
+            if ('letterSpacing' in ctx) ctx.letterSpacing = st.letterSpacing;
             ctx.fillStyle = '#ff0000';
-            ctx.textBaseline = 'top';
-            ctx.fillText(this.el.innerText, parseFloat(st.paddingLeft) || 0, parseFloat(st.paddingTop) || 0);
+            // Position the canvas glyphs at the same Y the DOM does.
+            // DOM baseline within the line box = paddingTop + halfLeading + ascent,
+            // where halfLeading = (lineHeight - (ascent + descent)) / 2.
+            ctx.textBaseline = 'alphabetic';
+            var fs = parseFloat(st.fontSize) || 0;
+            var lh = parseFloat(st.lineHeight);
+            if (!isFinite(lh)) lh = fs;
+            var pt = parseFloat(st.paddingTop) || 0;
+            var pl = parseFloat(st.paddingLeft) || 0;
+            var m = ctx.measureText(this.el.innerText || 'M');
+            // fontBoundingBox* reflects the font's hhea metrics; fall back to
+            // ratios that work for Latin sans-serifs if a browser doesn't
+            // expose them.
+            var ascent = isFinite(m.fontBoundingBoxAscent) ? m.fontBoundingBoxAscent : fs * 0.9;
+            var descent = isFinite(m.fontBoundingBoxDescent) ? m.fontBoundingBoxDescent : fs * 0.22;
+            var halfLead = (lh - (ascent + descent)) / 2;
+            var baseline = pt + halfLead + ascent;
+            ctx.fillText(this.el.innerText, pl, baseline);
         } else if (this.el.querySelector('svg')) {
             var svgNode = this.el.querySelector('svg');
             var svgClone = svgNode.cloneNode(true);
